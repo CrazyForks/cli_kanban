@@ -1,5 +1,7 @@
 # cli_kanban
 
+![cli_kanban screenshot](./screenshot.png)
+
 A terminal-based Kanban board management tool built with Go, featuring a beautiful TUI interface.
 
 ## Features
