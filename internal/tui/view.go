@@ -140,25 +140,45 @@ func (m Model) renderStats() string {
 func (m Model) renderColumn(index int, col model.Column) string {
 	var b strings.Builder
 
-	// Column title
+	// Column title with scroll indicator
+	totalTasks := len(col.Tasks)
+	offset := m.scrollOffsets[index]
 	title := columnTitleStyle.Render(col.Name)
 	b.WriteString(title)
 	b.WriteString("\n")
 
-	// Tasks
-	if len(col.Tasks) == 0 {
+	// Scroll up indicator
+	if offset > 0 {
+		scrollUp := lipgloss.NewStyle().Foreground(colorMuted).Render("  ▲ more above")
+		b.WriteString(scrollUp)
+		b.WriteString("\n")
+	}
+
+	// Tasks (only visible range)
+	if totalTasks == 0 {
 		emptyMsg := lipgloss.NewStyle().
 			Foreground(colorMuted).
 			Italic(true).
 			Render("No tasks")
 		b.WriteString(emptyMsg)
 	} else {
-		for i, task := range col.Tasks {
+		endIndex := offset + maxVisibleTasks
+		if endIndex > totalTasks {
+			endIndex = totalTasks
+		}
+		for i := offset; i < endIndex; i++ {
+			task := col.Tasks[i]
 			isActive := index == m.currentColumn && i == m.currentTask
 			taskView := m.renderTask(task, isActive)
 			b.WriteString(taskView)
 			b.WriteString("\n")
 		}
+	}
+
+	// Scroll down indicator
+	if offset+maxVisibleTasks < totalTasks {
+		scrollDown := lipgloss.NewStyle().Foreground(colorMuted).Render("  ▼ more below")
+		b.WriteString(scrollDown)
 	}
 
 	// Apply column style with status-specific colors

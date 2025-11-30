@@ -108,6 +108,7 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.currentTask > 0 {
 			m.currentTask--
+			m.ensureTaskVisible()
 		}
 		return m, nil
 
@@ -115,6 +116,7 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		col := m.columns[m.currentColumn]
 		if m.currentTask < len(col.Tasks)-1 {
 			m.currentTask++
+			m.ensureTaskVisible()
 		}
 		return m, nil
 
