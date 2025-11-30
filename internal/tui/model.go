@@ -25,6 +25,7 @@ type Model struct {
 	columns       []model.Column
 	currentColumn int
 	currentTask   int
+	scrollOffsets []int // scroll offset per column
 	viewMode      ViewMode
 	textInput     textinput.Model
 	textArea      textarea.Model
@@ -52,6 +53,7 @@ func NewModel(database *db.DB) Model {
 		columns:       model.GetAllColumns(),
 		currentColumn: 0,
 		currentTask:   0,
+		scrollOffsets: make([]int, 3), // one per column
 		viewMode:      ViewModeBoard,
 		textInput:     ti,
 		textArea:      ta,
@@ -93,6 +95,9 @@ type errMsg struct {
 	err error
 }
 
+// maxVisibleTasks is the maximum number of tasks visible per column
+const maxVisibleTasks = 10
+
 // getCurrentTask returns the currently selected task
 func (m *Model) getCurrentTask() *model.Task {
 	col := &m.columns[m.currentColumn]
@@ -100,6 +105,21 @@ func (m *Model) getCurrentTask() *model.Task {
 		return nil
 	}
 	return &col.Tasks[m.currentTask]
+}
+
+// ensureTaskVisible adjusts scroll offset to keep current task visible
+func (m *Model) ensureTaskVisible() {
+	offset := m.scrollOffsets[m.currentColumn]
+
+	// If current task is above visible area, scroll up
+	if m.currentTask < offset {
+		m.scrollOffsets[m.currentColumn] = m.currentTask
+	}
+
+	// If current task is below visible area, scroll down
+	if m.currentTask >= offset+maxVisibleTasks {
+		m.scrollOffsets[m.currentColumn] = m.currentTask - maxVisibleTasks + 1
+	}
 }
 
 // organizeTasks organizes tasks into columns by status
