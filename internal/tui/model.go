@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/happytaoer/cli_kanban/internal/db"
@@ -14,6 +15,7 @@ const (
 	ViewModeBoard ViewMode = iota
 	ViewModeAddTask
 	ViewModeEditTask
+	ViewModeEditDescription
 	ViewModeHelp
 )
 
@@ -25,6 +27,7 @@ type Model struct {
 	currentTask   int
 	viewMode      ViewMode
 	textInput     textinput.Model
+	textArea      textarea.Model
 	width         int
 	height        int
 	err           error
@@ -38,6 +41,12 @@ func NewModel(database *db.DB) Model {
 	ti.CharLimit = 200
 	ti.Width = 50
 
+	ta := textarea.New()
+	ta.Placeholder = "Enter task description..."
+	ta.SetWidth(80)
+	ta.SetHeight(10)
+	ta.CharLimit = 2000
+
 	return Model{
 		db:            database,
 		columns:       model.GetAllColumns(),
@@ -45,6 +54,7 @@ func NewModel(database *db.DB) Model {
 		currentTask:   0,
 		viewMode:      ViewModeBoard,
 		textInput:     ti,
+		textArea:      ta,
 	}
 }
 
@@ -76,6 +86,8 @@ type taskCreatedMsg struct {
 type taskUpdatedMsg struct{}
 
 type taskDeletedMsg struct{}
+
+type descriptionUpdatedMsg struct{}
 
 type errMsg struct {
 	err error
