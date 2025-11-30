@@ -28,6 +28,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDeletedMsg:
 		return m, m.loadTasks()
 
+	case descriptionUpdatedMsg:
+		return m, m.loadTasks()
+
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -39,6 +42,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle text input updates
 	if m.viewMode == ViewModeAddTask || m.viewMode == ViewModeEditTask {
 		m.textInput, cmd = m.textInput.Update(msg)
+		return m, cmd
+	}
+
+	// Handle textarea updates
+	if m.viewMode == ViewModeEditDescription {
+		m.textArea, cmd = m.textArea.Update(msg)
 		return m, cmd
 	}
 
@@ -70,6 +79,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleAddTaskKeys(msg)
 	case ViewModeEditTask:
 		return m.handleEditTaskKeys(msg)
+	case ViewModeEditDescription:
+		return m.handleEditDescriptionKeys(msg)
 	case ViewModeHelp:
 		return m.handleHelpKeys(msg)
 	}
@@ -136,6 +147,15 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "i":
+		task := m.getCurrentTask()
+		if task != nil {
+			m.viewMode = ViewModeEditDescription
+			m.textArea.SetValue(task.Description)
+			m.textArea.Focus()
+		}
+		return m, nil
+
 	case "?":
 		m.viewMode = ViewModeHelp
 		return m, nil
@@ -192,6 +212,30 @@ func (m Model) handleEditTaskKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// handleEditDescriptionKeys handles keyboard input in edit description mode
+func (m Model) handleEditDescriptionKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+s":
+		description := m.textArea.Value()
+		task := m.getCurrentTask()
+		if task != nil {
+			m.viewMode = ViewModeBoard
+			m.textArea.SetValue("")
+			return m, m.updateDescription(task.ID, description)
+		}
+		return m, nil
+
+	case "esc":
+		m.viewMode = ViewModeBoard
+		m.textArea.SetValue("")
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.textArea, cmd = m.textArea.Update(msg)
+	return m, cmd
+}
+
 // handleHelpKeys handles keyboard input in help mode
 func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.viewMode = ViewModeBoard
@@ -228,6 +272,17 @@ func (m Model) deleteTask(id int64) tea.Cmd {
 			return errMsg{err}
 		}
 		return taskDeletedMsg{}
+	}
+}
+
+// updateDescription updates a task's description
+func (m Model) updateDescription(id int64, description string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.db.UpdateTaskDescription(id, description)
+		if err != nil {
+			return errMsg{err}
+		}
+		return descriptionUpdatedMsg{}
 	}
 }
 

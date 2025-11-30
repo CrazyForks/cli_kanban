@@ -40,6 +40,7 @@ func (db *DB) initTables() error {
 	CREATE TABLE IF NOT EXISTS tasks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		title TEXT NOT NULL,
+		description TEXT DEFAULT '',
 		status TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -53,6 +54,15 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
+	// Migrate existing tables to add description column if it doesn't exist
+	_, err = db.conn.Exec(`
+		ALTER TABLE tasks ADD COLUMN description TEXT DEFAULT '';
+	`)
+	// Ignore error if column already exists
+	if err != nil && err.Error() != "duplicate column name: description" {
+		// Column might already exist, which is fine
+	}
+
 	return nil
 }
 
@@ -60,8 +70,8 @@ func (db *DB) initTables() error {
 func (db *DB) CreateTask(title string, status model.TaskStatus) (*model.Task, error) {
 	now := time.Now()
 	result, err := db.conn.Exec(
-		"INSERT INTO tasks (title, status, created_at, updated_at) VALUES (?, ?, ?, ?)",
-		title, status, now, now,
+		"INSERT INTO tasks (title, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+		title, "", status, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create task: %w", err)
@@ -73,18 +83,19 @@ func (db *DB) CreateTask(title string, status model.TaskStatus) (*model.Task, er
 	}
 
 	return &model.Task{
-		ID:        id,
-		Title:     title,
-		Status:    status,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		Title:       title,
+		Description: "",
+		Status:      status,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}, nil
 }
 
 // GetAllTasks retrieves all tasks
 func (db *DB) GetAllTasks() ([]model.Task, error) {
 	rows, err := db.conn.Query(
-		"SELECT id, title, status, created_at, updated_at FROM tasks ORDER BY created_at DESC",
+		"SELECT id, title, description, status, created_at, updated_at FROM tasks ORDER BY created_at DESC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tasks: %w", err)
@@ -94,7 +105,7 @@ func (db *DB) GetAllTasks() ([]model.Task, error) {
 	var tasks []model.Task
 	for rows.Next() {
 		var task model.Task
-		err := rows.Scan(&task.ID, &task.Title, &task.Status, &task.CreatedAt, &task.UpdatedAt)
+		err := rows.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.CreatedAt, &task.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan task: %w", err)
 		}
@@ -107,7 +118,7 @@ func (db *DB) GetAllTasks() ([]model.Task, error) {
 // GetTasksByStatus retrieves tasks by status
 func (db *DB) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) {
 	rows, err := db.conn.Query(
-		"SELECT id, title, status, created_at, updated_at FROM tasks WHERE status = ? ORDER BY created_at DESC",
+		"SELECT id, title, description, status, created_at, updated_at FROM tasks WHERE status = ? ORDER BY created_at DESC",
 		status,
 	)
 	if err != nil {
@@ -118,7 +129,7 @@ func (db *DB) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) {
 	var tasks []model.Task
 	for rows.Next() {
 		var task model.Task
-		err := rows.Scan(&task.ID, &task.Title, &task.Status, &task.CreatedAt, &task.UpdatedAt)
+		err := rows.Scan(&task.ID, &task.Title, &task.Description, &task.Status, &task.CreatedAt, &task.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan task: %w", err)
 		}
@@ -158,6 +169,28 @@ func (db *DB) UpdateTaskStatus(id int64, status model.TaskStatus) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update task status: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("task not found")
+	}
+
+	return nil
+}
+
+// UpdateTaskDescription updates only the description of a task
+func (db *DB) UpdateTaskDescription(id int64, description string) error {
+	result, err := db.conn.Exec(
+		"UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?",
+		description, time.Now(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update task description: %w", err)
 	}
 
 	rows, err := result.RowsAffected()

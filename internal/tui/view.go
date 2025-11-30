@@ -53,8 +53,14 @@ var (
 			Bold(true)
 
 	helpStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+
+	footerStyle = lipgloss.NewStyle().
+			BorderTop(true).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(colorBorder).
 			Foreground(colorMuted).
-			MarginTop(1)
+			PaddingTop(1)
 
 	inputStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -78,6 +84,8 @@ func (m Model) View() string {
 		return m.viewAddTask()
 	case ViewModeEditTask:
 		return m.viewEditTask()
+	case ViewModeEditDescription:
+		return m.viewEditDescription()
 	case ViewModeHelp:
 		return m.viewHelp()
 	default:
@@ -109,9 +117,10 @@ func (m Model) viewBoard() string {
 	b.WriteString(columnsView)
 	b.WriteString("\n\n")
 
-	// Help text
-	help := helpStyle.Render("← → / h l: Navigate columns | ↑ ↓ / j k: Navigate tasks | a: Add | e: Edit | d: Delete | m: Move | ?: Help | q: Quit")
-	b.WriteString(help)
+	// Footer with help text (fixed at bottom)
+	helpText := "← → / h l: Navigate columns | ↑ ↓ / j k: Navigate tasks | a: Add | e: Edit | i: Description | d: Delete | m: Move | ?: Help | q: Quit"
+	footer := footerStyle.Render(helpText)
+	b.WriteString(footer)
 
 	// Error message
 	if m.err != nil {
@@ -216,6 +225,31 @@ func (m Model) viewEditTask() string {
 	return b.String()
 }
 
+// viewEditDescription renders the edit description view
+func (m Model) viewEditDescription() string {
+	var b strings.Builder
+
+	title := titleStyle.Render("📝 Edit Task Description")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+
+	task := m.getCurrentTask()
+	if task != nil {
+		info := fmt.Sprintf("Task: %s", task.Title)
+		b.WriteString(lipgloss.NewStyle().Foreground(colorSecondary).Render(info))
+		b.WriteString("\n\n")
+	}
+
+	textAreaView := m.textArea.View()
+	b.WriteString(textAreaView)
+	b.WriteString("\n\n")
+
+	help := helpStyle.Render("Ctrl+S: Save | Esc: Cancel")
+	b.WriteString(help)
+
+	return b.String()
+}
+
 // viewHelp renders the help view
 func (m Model) viewHelp() string {
 	var b strings.Builder
@@ -230,7 +264,8 @@ func (m Model) viewHelp() string {
 
 Actions:
   a             Add new task to current column
-  e or Enter    Edit selected task
+  e or Enter    Edit selected task title
+  i             Edit selected task description
   d or Delete   Delete selected task
   m             Move task to next column
 
