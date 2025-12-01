@@ -87,6 +87,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditTaskKeys(msg)
 	case ViewModeEditDescription:
 		return m.handleEditDescriptionKeys(msg)
+	case ViewModeConfirmDelete:
+		return m.handleConfirmDeleteKeys(msg)
 	case ViewModeHelp:
 		return m.handleHelpKeys(msg)
 	}
@@ -144,7 +146,8 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d", "delete":
 		task := m.getCurrentTask()
 		if task != nil {
-			return m, m.deleteTask(task.ID)
+			m.pendingDeleteID = task.ID
+			m.viewMode = ViewModeConfirmDelete
 		}
 		return m, nil
 
@@ -242,6 +245,24 @@ func (m Model) handleEditDescriptionKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.textArea, cmd = m.textArea.Update(msg)
 	return m, cmd
+}
+
+// handleConfirmDeleteKeys handles keyboard input in delete confirmation mode
+func (m Model) handleConfirmDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		id := m.pendingDeleteID
+		m.pendingDeleteID = 0
+		m.viewMode = ViewModeBoard
+		return m, m.deleteTask(id)
+
+	case "n", "N", "esc":
+		m.pendingDeleteID = 0
+		m.viewMode = ViewModeBoard
+		return m, nil
+	}
+
+	return m, nil
 }
 
 // handleHelpKeys handles keyboard input in help mode

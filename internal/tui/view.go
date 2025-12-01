@@ -80,6 +80,8 @@ func (m Model) View() string {
 		return m.viewEditTask()
 	case ViewModeEditDescription:
 		return m.viewEditDescription()
+	case ViewModeConfirmDelete:
+		return m.viewConfirmDelete()
 	case ViewModeHelp:
 		return m.viewHelp()
 	default:
@@ -271,6 +273,30 @@ func (m Model) viewEditDescription() string {
 	b.WriteString("\n\n")
 
 	help := helpStyle.Render("Ctrl+S: Save | Esc: Cancel")
+	b.WriteString(help)
+
+	return b.String()
+}
+
+// viewConfirmDelete renders the delete confirmation view
+func (m Model) viewConfirmDelete() string {
+	var b strings.Builder
+
+	title := titleStyle.Render("⚠️  Confirm Delete")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+
+	task := m.getCurrentTask()
+	if task != nil {
+		warning := lipgloss.NewStyle().
+			Foreground(colorDanger).
+			Bold(true).
+			Render(fmt.Sprintf("Are you sure you want to delete this task?\n\n\"%s\"", task.Title))
+		b.WriteString(warning)
+		b.WriteString("\n\n")
+	}
+
+	help := helpStyle.Render("y: Yes, delete | n/Esc: Cancel")
 	b.WriteString(help)
 
 	return b.String()

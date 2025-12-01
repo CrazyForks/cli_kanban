@@ -18,23 +18,25 @@ const (
 	ViewModeAddTask
 	ViewModeEditTask
 	ViewModeEditDescription
+	ViewModeConfirmDelete
 	ViewModeHelp
 )
 
 // Model is the main TUI model
 type Model struct {
-	db            *db.DB
-	columns       []model.Column
-	currentColumn int
-	currentTask   int
-	scrollOffsets []int // scroll offset per column
-	viewMode      ViewMode
-	currentTime   time.Time
-	textInput     textinput.Model
-	textArea      textarea.Model
-	width         int
-	height        int
-	err           error
+	db              *db.DB
+	columns         []model.Column
+	currentColumn   int
+	currentTask     int
+	scrollOffsets   []int // scroll offset per column
+	viewMode        ViewMode
+	currentTime     time.Time
+	pendingDeleteID int64 // task ID pending deletion confirmation
+	textInput       textinput.Model
+	textArea        textarea.Model
+	width           int
+	height          int
+	err             error
 }
 
 // clockTickCmd creates a command that emits time ticks every second
