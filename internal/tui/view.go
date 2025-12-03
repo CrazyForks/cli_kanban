@@ -117,7 +117,12 @@ func (m Model) viewBoard() string {
 
 	// Footer with help text (fixed at bottom)
 	helpText := "← → / h l: Navigate columns | ↑ ↓ / j k: Navigate tasks | a: Add | e: Edit | i: Description | d: Delete | m: Move | ?: Help | q: Quit"
-	footer := footerStyle.Render(helpText)
+	helpWidth := m.width
+	if helpWidth <= 0 {
+		helpWidth = lipgloss.Width(helpText)
+	}
+	helpContent := lipgloss.PlaceHorizontal(helpWidth, lipgloss.Left, helpText)
+	footer := footerStyle.Width(helpWidth).Render(helpContent)
 	b.WriteString(footer)
 
 	// Error message
