@@ -233,20 +233,34 @@ func (m Model) renderTask(task model.Task, isActive bool) string {
 
 	// Render tags if present
 	if len(task.Tags) > 0 {
-		b.WriteString("\n  ")
-		for i, tag := range task.Tags {
-			if i > 2 {
-				b.WriteString(fmt.Sprintf("+%d", len(task.Tags)-3))
-				break
-			}
+		b.WriteString("\n")
+		lineWidth := 0
+		maxWidth := taskStyle.GetWidth()
+		if maxWidth == 0 {
+			maxWidth = 24
+		}
+		for _, tag := range task.Tags {
 			tagStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#FFFFFF")).
 				Background(getTagColor(tag)).
 				Padding(0, 1)
-			b.WriteString(tagStyle.Render(tag))
-			if i < len(task.Tags)-1 && i < 2 {
-				b.WriteString(" ")
+			rendered := tagStyle.Render(tag)
+			tagWidth := lipgloss.Width(rendered)
+			space := 0
+			if lineWidth > 0 {
+				space = 1
 			}
+			if lineWidth+space+tagWidth > maxWidth {
+				b.WriteString("\n")
+				lineWidth = 0
+				space = 0
+			}
+			if space == 1 {
+				b.WriteString(" ")
+				lineWidth++
+			}
+			b.WriteString(rendered)
+			lineWidth += tagWidth
 		}
 	}
 
