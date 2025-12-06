@@ -95,8 +95,6 @@ func (m Model) View() string {
 
 // viewBoard renders the kanban board
 func (m Model) viewBoard() string {
-	var result strings.Builder
-
 	// Header: Title + Statistics on same line
 	title := titleStyle.Render("📋 Kanban Board")
 	stats := m.renderStats()
@@ -105,15 +103,17 @@ func (m Model) viewBoard() string {
 		headerWidth = 80
 	}
 	// Place title on left, stats on right
+	spacerWidth := headerWidth - lipgloss.Width(title) - lipgloss.Width(stats)
+	if spacerWidth < 0 {
+		spacerWidth = 1
+	}
 	header := lipgloss.JoinHorizontal(lipgloss.Center,
 		title,
-		lipgloss.NewStyle().Width(headerWidth-lipgloss.Width(title)-lipgloss.Width(stats)).Render(""),
+		lipgloss.NewStyle().Width(spacerWidth).Render(""),
 		stats,
 	)
-	result.WriteString(header)
-	result.WriteString("\n")
 
-	// Columns content (will be placed in viewport)
+	// Columns content for viewport
 	columns := make([]string, len(m.columns))
 	for i, col := range m.columns {
 		columns[i] = m.renderColumn(i, col)
@@ -125,22 +125,11 @@ func (m Model) viewBoard() string {
 		columnsView += "\n\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
 	}
 
-	// Render columns in viewport area
-	if m.ready {
-		// Use viewport height to limit content display
-		vpHeight := m.viewport.Height
-		contentLines := strings.Split(columnsView, "\n")
-		if len(contentLines) > vpHeight {
-			contentLines = contentLines[:vpHeight]
-		}
-		columnsView = strings.Join(contentLines, "\n")
-	}
-
-	result.WriteString(columnsView)
-	result.WriteString("\n")
+	// Set viewport content and render
+	m.viewport.SetContent(columnsView)
 
 	// Footer with help text (fixed at bottom)
-	helpText := "← → / h l: Navigate columns | ↑ ↓ / j k: Navigate tasks | a: Add | e: Edit | i: Description | t: Tags | d: Delete | m: Move | ?: Help | q: Quit"
+	helpText := "← → / h l: Navigate | a: Add | e: Edit | i: Desc | t: Tags | d: Del | m: Move | ?: Help | q: Quit"
 	helpWidth := m.width
 	if helpWidth <= 0 {
 		helpWidth = lipgloss.Width(helpText)
@@ -148,19 +137,8 @@ func (m Model) viewBoard() string {
 	helpContent := lipgloss.PlaceHorizontal(helpWidth, lipgloss.Left, helpText)
 	footer := footerStyle.Width(helpWidth).Render(helpContent)
 
-	// Pad to push footer to bottom
-	contentHeight := lipgloss.Height(result.String())
-	footerHeight := lipgloss.Height(footer)
-	if m.height > 0 {
-		available := m.height - footerHeight
-		if available > contentHeight {
-			padLines := available - contentHeight
-			result.WriteString(strings.Repeat("\n", padLines))
-		}
-	}
-
-	result.WriteString(footer)
-	return result.String()
+	// Combine: header + viewport + footer
+	return fmt.Sprintf("%s\n%s\n%s", header, m.viewport.View(), footer)
 }
 
 // renderStats renders the statistics bar
