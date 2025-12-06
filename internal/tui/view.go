@@ -319,20 +319,43 @@ func (m Model) matchesSearch(task model.Task) bool {
 	if m.searchQuery == "" {
 		return true
 	}
+
+	query := m.searchQuery
+
+	// Check for tag: prefix (tag-only search)
+	if strings.HasPrefix(query, "tag:") {
+		tagQuery := strings.TrimPrefix(query, "tag:")
+		if tagQuery == "" {
+			return true
+		}
+
+		for _, tag := range task.Tags {
+			if strings.EqualFold(tag, tagQuery) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	// General search: title, description, tags
 	// Search in title
-	if strings.Contains(strings.ToLower(task.Title), m.searchQuery) {
+	if strings.Contains(strings.ToLower(task.Title), query) {
 		return true
 	}
+
 	// Search in description
-	if strings.Contains(strings.ToLower(task.Description), m.searchQuery) {
+	if strings.Contains(strings.ToLower(task.Description), query) {
 		return true
 	}
+
 	// Search in tags
 	for _, tag := range task.Tags {
-		if strings.Contains(strings.ToLower(tag), m.searchQuery) {
+		if strings.EqualFold(tag, query) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -474,6 +497,15 @@ Actions:
   t             Edit selected task tags
   d or Delete   Delete selected task
   m             Move task to next column
+
+Search:
+  /             Open search input
+  Enter         Apply search filter
+  Esc           Clear search filter (when active)
+  
+  Search syntax:
+    keyword     Search in title, description and tags
+    tag:name    Search only in tags (exact match)
 
 Other:
   ?             Show this help
