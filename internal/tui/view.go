@@ -197,16 +197,10 @@ func (m Model) renderStats() string {
 func (m Model) renderColumn(index int, col model.Column) string {
 	var b strings.Builder
 
-	// Filter tasks by search query
-	var filteredTasks []model.Task
-	for _, task := range col.Tasks {
-		if m.matchesSearch(task) {
-			filteredTasks = append(filteredTasks, task)
-		}
-	}
+	visibleIndices := m.visibleTaskIndices(index)
 
 	// Column title with scroll indicator
-	totalTasks := len(filteredTasks)
+	totalTasks := len(visibleIndices)
 	offset := m.scrollOffsets[index]
 	if offset >= totalTasks {
 		offset = 0
@@ -244,7 +238,11 @@ func (m Model) renderColumn(index int, col model.Column) string {
 			endIndex = totalTasks
 		}
 		for i := offset; i < endIndex; i++ {
-			task := filteredTasks[i]
+			actualIdx := visibleIndices[i]
+			if actualIdx < 0 || actualIdx >= len(col.Tasks) {
+				continue
+			}
+			task := col.Tasks[actualIdx]
 			isActive := index == m.currentColumn && i == m.currentTask
 			taskView := m.renderTask(task, isActive)
 			b.WriteString(taskView)

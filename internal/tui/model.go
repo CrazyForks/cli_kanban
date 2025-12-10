@@ -140,28 +140,65 @@ type errMsg struct {
 // maxVisibleTasks is the maximum number of tasks visible per column
 const maxVisibleTasks = 10
 
-// getCurrentTask returns the currently selected task
+// getCurrentTask returns the currently selected task (respecting active filters)
 func (m *Model) getCurrentTask() *model.Task {
-	col := &m.columns[m.currentColumn]
-	if len(col.Tasks) == 0 || m.currentTask >= len(col.Tasks) {
+	if len(m.columns) == 0 || m.currentColumn < 0 || m.currentColumn >= len(m.columns) {
 		return nil
 	}
-	return &col.Tasks[m.currentTask]
+
+	visibleIndices := m.visibleTaskIndices(m.currentColumn)
+	if len(visibleIndices) == 0 || m.currentTask < 0 || m.currentTask >= len(visibleIndices) {
+		return nil
+	}
+
+	actualIdx := visibleIndices[m.currentTask]
+	col := &m.columns[m.currentColumn]
+	if actualIdx < 0 || actualIdx >= len(col.Tasks) {
+		return nil
+	}
+
+	return &col.Tasks[actualIdx]
 }
 
 // ensureTaskVisible adjusts scroll offset to keep current task visible
 func (m *Model) ensureTaskVisible() {
+	if len(m.columns) == 0 {
+		return
+	}
+
+	visibleIndices := m.visibleTaskIndices(m.currentColumn)
+	visibleCount := len(visibleIndices)
+
+	if visibleCount == 0 {
+		m.currentTask = 0
+		m.scrollOffsets[m.currentColumn] = 0
+		return
+	}
+
+	if m.currentTask >= visibleCount {
+		m.currentTask = visibleCount - 1
+	}
+	if m.currentTask < 0 {
+		m.currentTask = 0
+	}
+
 	offset := m.scrollOffsets[m.currentColumn]
+	maxOffset := visibleCount - maxVisibleTasks
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
 
-	// If current task is above visible area, scroll up
 	if m.currentTask < offset {
-		m.scrollOffsets[m.currentColumn] = m.currentTask
+		offset = m.currentTask
+	}
+	if m.currentTask >= offset+maxVisibleTasks {
+		offset = m.currentTask - maxVisibleTasks + 1
 	}
 
-	// If current task is below visible area, scroll down
-	if m.currentTask >= offset+maxVisibleTasks {
-		m.scrollOffsets[m.currentColumn] = m.currentTask - maxVisibleTasks + 1
-	}
+	m.scrollOffsets[m.currentColumn] = offset
 }
 
 // organizeTasks organizes tasks into columns by status
@@ -198,11 +235,31 @@ func (m *Model) organizeTasks(tasks []model.Task) {
 		}
 	}
 
-	// Ensure currentTask is within bounds
-	if m.currentTask >= len(m.columns[m.currentColumn].Tasks) {
-		m.currentTask = len(m.columns[m.currentColumn].Tasks) - 1
+	// Ensure currentTask/scroll offset are valid for the current filters
+	m.ensureTaskVisible()
+}
+
+// visibleTaskIndices returns the indices of tasks visible in the given column
+// after applying the current search filter.
+func (m Model) visibleTaskIndices(columnIndex int) []int {
+	if columnIndex < 0 || columnIndex >= len(m.columns) {
+		return nil
 	}
-	if m.currentTask < 0 {
-		m.currentTask = 0
+
+	col := m.columns[columnIndex]
+	if m.searchQuery == "" {
+		indices := make([]int, len(col.Tasks))
+		for i := range col.Tasks {
+			indices[i] = i
+		}
+		return indices
 	}
+
+	indices := make([]int, 0, len(col.Tasks))
+	for i, task := range col.Tasks {
+		if m.matchesSearch(task) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
 }
