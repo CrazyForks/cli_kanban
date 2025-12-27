@@ -43,12 +43,49 @@ go build -o cli_kanban
 ### Launch Application
 
 ```bash
-# Use default database path (~/.cli_kanban.db)
+# Use default workspace (default)
 ./cli_kanban
 
-# Specify custom database path
-./cli_kanban --db /path/to/kanban.db
+# Use a named workspace (stored under ~/.cli_kanban/)
+./cli_kanban -w work
+
+# List existing workspaces
+./cli_kanban --list
+
+# Delete a workspace database
+./cli_kanban --delete work
 ```
+
+### Workspaces
+
+`cli_kanban` stores data in separate **workspaces**. Each workspace maps to its own SQLite database file.
+
+- Default workspace: `default`
+- Select workspace: `--workspace <name>`
+
+**Workspace name rules**
+
+- Allowed characters: lowercase letters, digits, `_`, `-`
+- Length: 1–32
+- Examples: `default`, `work`, `personal_2025`, `proj-a`
+
+### Data Storage
+
+All databases are stored under your home directory:
+
+- Directory: `~/.cli_kanban/`
+- Database file: `~/.cli_kanban/cli_kanban__<workspace>.db`
+
+Examples:
+
+- `~/.cli_kanban/cli_kanban__default.db`
+- `~/.cli_kanban/cli_kanban__work.db`
+
+### Migration Notes
+
+Older versions used a single default database at `~/.cli_kanban.db`.
+
+On first run with the `default` workspace, if `~/.cli_kanban/cli_kanban__default.db` does not exist but `~/.cli_kanban.db` does, the old database is copied to the new location.
 
 ### Keyboard Shortcuts
 
