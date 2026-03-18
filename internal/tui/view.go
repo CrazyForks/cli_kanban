@@ -28,8 +28,7 @@ var (
 	columnStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorBorder).
-			Padding(1, 2).
-			Width(30)
+			Padding(0, 1)
 
 	columnTitleStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -38,16 +37,32 @@ var (
 
 	taskStyle = lipgloss.NewStyle().
 			Padding(0, 1).
-			MarginBottom(1).
-			Width(26)
+			MarginBottom(1)
 
 	taskActiveStyle = lipgloss.NewStyle().
 			Padding(0, 1).
 			MarginBottom(1).
-			Width(26).
 			Background(colorPrimary).
 			Foreground(lipgloss.Color("#FFFFFF")).
 			Bold(true)
+
+	detailPaneStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBorder).
+			Padding(1, 2)
+
+	detailLabelStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorSecondary)
+
+	detailMetaStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+
+	detailSectionStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colorBorder).
+			Padding(0, 1).
+			MarginBottom(1)
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(colorMuted)
@@ -98,40 +113,41 @@ func (m Model) View() string {
 
 // viewBoard renders the kanban board
 func (m Model) viewBoard() string {
-	// Header: Title + Statistics on same line
 	title := titleStyle.Render("📋 Kanban Board")
 	stats := m.renderStats()
 	headerWidth := m.width
 	if headerWidth <= 0 {
 		headerWidth = 80
 	}
-	// Place title on left, stats on right
-	spacerWidth := headerWidth - lipgloss.Width(title) - lipgloss.Width(stats)
-	if spacerWidth < 0 {
-		spacerWidth = 1
-	}
-	header := lipgloss.JoinHorizontal(lipgloss.Center,
-		title,
-		lipgloss.NewStyle().Width(spacerWidth).Render(""),
-		stats,
-	)
 
-	// Columns content for viewport
-	columns := make([]string, len(m.columns))
-	for i, col := range m.columns {
-		columns[i] = m.renderColumn(i, col)
+	var header string
+	if lipgloss.Width(title)+lipgloss.Width(stats)+1 > headerWidth {
+		header = title + "\n" + stats
+	} else {
+		spacerWidth := headerWidth - lipgloss.Width(title) - lipgloss.Width(stats)
+		if spacerWidth < 1 {
+			spacerWidth = 1
+		}
+		header = lipgloss.JoinHorizontal(lipgloss.Center,
+			title,
+			lipgloss.NewStyle().Width(spacerWidth).Render(""),
+			stats,
+		)
 	}
-	columnsView := lipgloss.JoinHorizontal(lipgloss.Top, columns...)
 
-	// Error message appended to columns if present
+	boardPane := m.renderBoardPane(m.boardPaneWidth())
+	body := boardPane
+	if m.shouldShowDetailPane() {
+		detailPane := m.renderDetailPane(m.detailPaneWidth())
+		body = lipgloss.JoinHorizontal(lipgloss.Top, boardPane, " ", detailPane)
+	}
+
 	if m.err != nil {
-		columnsView += "\n\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
+		body += "\n\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
 	}
 
-	// Set viewport content and render
-	m.viewport.SetContent(columnsView)
+	m.viewport.SetContent(body)
 
-	// Footer with help text or search input (fixed at bottom)
 	var footerContent string
 	helpWidth := m.width
 	if helpWidth <= 0 {
@@ -139,24 +155,91 @@ func (m Model) viewBoard() string {
 	}
 
 	if m.viewMode == ViewModeSearch {
-		// Show search input in footer
 		searchLabel := lipgloss.NewStyle().Bold(true).Render("Search: ")
 		footerContent = searchLabel + m.searchInput.View()
+	} else if m.editingField != DetailFieldNone {
+		footerContent = m.renderDetailEditHelp()
 	} else if m.searchQuery != "" {
-		// Show active search filter
 		searchInfo := lipgloss.NewStyle().Render(fmt.Sprintf("Filter: \"%s\"", m.searchQuery))
-		helpText := "/ : Search | Esc: Clear filter | F5: Refresh | ← → : Navigate | a: Add | e: Edit | ?: Help | q: Quit"
+		helpText := "/ : Search | Esc: Clear filter | F5: Refresh | ← → : Navigate | a: Add | e/i/t/u: Edit | ?: Help | q: Quit"
 		footerContent = searchInfo + "  |  " + helpText
 	} else {
-		// Normal help text
-		footerContent = "← → : Navigate | a: Add | e: Edit | i: Desc | t: Tags | u: Due | d: Del | m: Move | / : Search | F5: Refresh | ?: Help | q: Quit"
+		if m.shouldShowDetailPane() {
+			footerContent = "← → : Navigate | a: Add | e: Title | i: Desc | t: Tags | u: Due | d: Del | m: Move | / : Search | F5: Refresh | ?: Help | q: Quit"
+		} else {
+			footerContent = "← → : Navigate | a: Add | e: Edit | i: Desc | t: Tags | u: Due | d: Del | m: Move | / : Search | F5: Refresh | ?: Help | q: Quit"
+		}
 	}
 
 	helpContent := lipgloss.PlaceHorizontal(helpWidth, lipgloss.Left, footerContent)
 	footer := footerStyle.Width(helpWidth).Render(helpContent)
 
-	// Combine: header + viewport + footer
 	return fmt.Sprintf("%s\n%s\n%s", header, m.viewport.View(), footer)
+}
+
+// renderBoardPane renders the left-side kanban board area.
+func (m Model) renderBoardPane(width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	columnCount := len(m.columns)
+	if columnCount == 0 {
+		return lipgloss.NewStyle().Width(fixedBoardPaneWidth).Render("")
+	}
+
+	gap := fixedBoardGap
+	columnWidth := fixedBoardColumnWidth
+
+	columns := make([]string, len(m.columns))
+	for i, col := range m.columns {
+		columns[i] = m.renderColumn(i, col, columnWidth)
+	}
+
+	return joinHorizontalWithGap(columns, gap)
+}
+
+// renderDetailPane renders the right-side task detail panel.
+func (m Model) renderDetailPane(width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	innerWidth := width - detailPaneStyle.GetHorizontalFrameSize()
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+
+	b.WriteString(titleStyle.Copy().MarginBottom(0).Render("Task Details"))
+	task := m.getDetailTask()
+	if task == nil {
+		b.WriteString("\n\n")
+		b.WriteString(helpStyle.Render("Select a task on the board to inspect it here."))
+		return detailPaneStyle.Copy().Width(width).Render(b.String())
+	}
+
+	status := strings.ReplaceAll(string(task.Status), "_", " ")
+	b.WriteString("\n")
+	b.WriteString(detailMetaStyle.Render(fmt.Sprintf("Status: %s", status)))
+	if task.Due != nil {
+		b.WriteString("\n")
+		b.WriteString(detailMetaStyle.Render("Due: " + task.Due.Format("2006-01-02")))
+	}
+	b.WriteString("\n")
+	b.WriteString(detailMetaStyle.Render("Updated: " + task.UpdatedAt.Format("2006-01-02 15:04")))
+	b.WriteString("\n\n")
+
+	b.WriteString(m.renderDetailField("Title", task.Title, DetailFieldTitle, innerWidth))
+	b.WriteString(m.renderDetailField("Description", task.Description, DetailFieldDescription, innerWidth))
+	b.WriteString(m.renderDetailField("Tags", strings.Join(task.Tags, ", "), DetailFieldTags, innerWidth))
+	dueText := "No due date"
+	if task.Due != nil {
+		dueText = task.Due.Format("2006-01-02")
+	}
+	b.WriteString(m.renderDetailField("Due Date", dueText, DetailFieldDue, innerWidth))
+
+	return detailPaneStyle.Copy().Width(width).Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // renderStats renders the statistics bar
@@ -194,8 +277,13 @@ func (m Model) renderStats() string {
 }
 
 // renderColumn renders a single column
-func (m Model) renderColumn(index int, col model.Column) string {
+func (m Model) renderColumn(index int, col model.Column, columnWidth int) string {
 	var b strings.Builder
+	columnPaneStyle := columnStyle.Copy().Width(columnWidth)
+	taskWidth := columnWidth - columnPaneStyle.GetHorizontalFrameSize()
+	if taskWidth < 8 {
+		taskWidth = 8
+	}
 
 	visibleIndices := m.visibleTaskIndices(index)
 
@@ -244,9 +332,11 @@ func (m Model) renderColumn(index int, col model.Column) string {
 			}
 			task := col.Tasks[actualIdx]
 			isActive := index == m.currentColumn && i == m.currentTask
-			taskView := m.renderTask(task, isActive)
+			taskView := m.renderTask(task, isActive, taskWidth)
 			b.WriteString(taskView)
-			b.WriteString("\n")
+			if i < endIndex-1 {
+				b.WriteString("\n")
+			}
 		}
 	}
 
@@ -256,9 +346,8 @@ func (m Model) renderColumn(index int, col model.Column) string {
 		b.WriteString(scrollDown)
 	}
 
-	// Apply column style with status-specific colors
 	content := b.String()
-	style := columnStyle.Copy()
+	style := columnPaneStyle
 	switch col.Status {
 	case model.StatusInProgress:
 		style = style.BorderForeground(colorInProgress)
@@ -304,47 +393,48 @@ func runeWidth(r rune) int {
 }
 
 // renderTask renders a single task
-func (m Model) renderTask(task model.Task, isActive bool) string {
+func (m Model) renderTask(task model.Task, isActive bool, cardWidth int) string {
 	var b strings.Builder
+	style := taskStyle.Copy().Width(cardWidth)
+	if isActive {
+		style = taskActiveStyle.Copy().Width(cardWidth)
+	}
 
-	// Get max width for text wrapping (account for padding)
-	maxWidth := taskStyle.GetWidth() - 2 // subtract padding
+	maxWidth := cardWidth - style.GetHorizontalFrameSize()
 	if maxWidth <= 0 {
 		maxWidth = 22
 	}
 
-	// Wrap title text using character-based breaking
 	wrappedTitle := wrapText(task.Title, maxWidth)
 	b.WriteString(wrappedTitle)
 
-	// Render due date if present (below title)
+	var metaItems []string
 	if task.Due != nil {
 		dueStr := task.Due.Format("2006-01-02")
 		dueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
-		b.WriteString("\n")
-		b.WriteString(dueStyle.Render("📅 " + dueStr))
+		metaItems = append(metaItems, dueStyle.Render("📅 "+dueStr))
 	}
 
-	// Render tags if present
 	if len(task.Tags) > 0 {
-		b.WriteString("\n")
-		lineWidth := 0
-		maxWidth := taskStyle.GetWidth()
-		if maxWidth == 0 {
-			maxWidth = 24
-		}
 		for _, tag := range task.Tags {
 			tagStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#FFFFFF")).
 				Background(getTagColor(tag)).
 				Padding(0, 1)
-			rendered := tagStyle.Render(tag)
-			tagWidth := lipgloss.Width(rendered)
+			metaItems = append(metaItems, tagStyle.Render(tag))
+		}
+	}
+
+	if len(metaItems) > 0 {
+		b.WriteString("\n")
+		lineWidth := 0
+		for idx, item := range metaItems {
+			itemWidth := lipgloss.Width(item)
 			space := 0
 			if lineWidth > 0 {
 				space = 1
 			}
-			if lineWidth+space+tagWidth > maxWidth {
+			if lineWidth+space+itemWidth > maxWidth && lineWidth > 0 {
 				b.WriteString("\n")
 				lineWidth = 0
 				space = 0
@@ -353,16 +443,117 @@ func (m Model) renderTask(task model.Task, isActive bool) string {
 				b.WriteString(" ")
 				lineWidth++
 			}
-			b.WriteString(rendered)
-			lineWidth += tagWidth
+			b.WriteString(item)
+			lineWidth += itemWidth
+			if idx == len(metaItems)-1 {
+				continue
+			}
 		}
 	}
 
 	text := b.String()
-	if isActive {
-		return taskActiveStyle.Render(text)
+	return style.Render(text)
+}
+
+// renderDetailField renders one field in the right-side detail panel.
+func (m Model) renderDetailField(label, value string, field DetailField, width int) string {
+	var body string
+	isEditing := m.editingField == field
+	sectionStyle := detailSectionStyle.Copy()
+	if isEditing {
+		sectionStyle = sectionStyle.Copy().BorderForeground(colorPrimary)
 	}
-	return taskStyle.Render(text)
+	sectionStyle = sectionStyle.Width(width)
+
+	switch field {
+	case DetailFieldTitle:
+		if isEditing {
+			body = m.titleInput.View()
+		} else {
+			body = wrapText(emptyFallback(value, "Untitled task"), width-4)
+		}
+	case DetailFieldDescription:
+		if isEditing {
+			body = m.textArea.View()
+		} else {
+			body = wrapText(emptyFallback(value, "No description"), width-4)
+		}
+	case DetailFieldTags:
+		if isEditing {
+			body = m.tagsInput.View()
+		} else {
+			body = wrapText(emptyFallback(value, "No tags"), width-4)
+		}
+	case DetailFieldDue:
+		if isEditing {
+			body = m.dueInput.View()
+		} else {
+			body = emptyFallback(value, "No due date")
+		}
+	default:
+		body = emptyFallback(value, "")
+	}
+
+	hint := detailMetaStyle.Render(detailShortcut(field))
+	content := detailLabelStyle.Render(label) + "\n" + body
+	if !isEditing {
+		content += "\n" + hint
+	}
+	return sectionStyle.Render(content) + "\n"
+}
+
+// renderDetailEditHelp renders footer hints while editing the detail panel.
+func (m Model) renderDetailEditHelp() string {
+	switch m.editingField {
+	case DetailFieldDescription:
+		return "Editing description | Ctrl+S: Save | Esc: Cancel"
+	case DetailFieldTitle:
+		return "Editing title | Enter: Save | Esc: Cancel"
+	case DetailFieldTags:
+		return "Editing tags | Enter: Save | Esc: Cancel"
+	case DetailFieldDue:
+		return "Editing due date | Enter: Save | Esc: Cancel"
+	default:
+		return "Esc: Cancel"
+	}
+}
+
+// joinHorizontalWithGap joins panes with a fixed horizontal gap.
+func joinHorizontalWithGap(parts []string, gap int) string {
+	if len(parts) == 0 {
+		return ""
+	}
+
+	gapStr := strings.Repeat(" ", gap)
+	result := parts[0]
+	for i := 1; i < len(parts); i++ {
+		result = lipgloss.JoinHorizontal(lipgloss.Top, result, gapStr, parts[i])
+	}
+	return result
+}
+
+// detailShortcut returns the inline help text for a detail field.
+func detailShortcut(field DetailField) string {
+	switch field {
+	case DetailFieldTitle:
+		return "Press e to edit"
+	case DetailFieldDescription:
+		return "Press i to edit"
+	case DetailFieldTags:
+		return "Press t to edit"
+	case DetailFieldDue:
+		return "Press u to edit"
+	default:
+		return ""
+	}
+}
+
+// emptyFallback returns a fallback string when a field has no value.
+func emptyFallback(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 // getTagColor returns a color based on tag name hash

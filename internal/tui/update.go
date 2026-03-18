@@ -35,6 +35,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = vpHeight
 		}
+		if !m.shouldShowDetailPane() && m.editingField != DetailFieldNone {
+			m.clearDetailEditing()
+		}
+		m.resizeDetailInputs()
 		return m, nil
 
 	case clockTickMsg:
@@ -96,6 +100,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if m.viewMode == ViewModeBoard && m.editingField != DetailFieldNone {
+		switch m.editingField {
+		case DetailFieldTitle:
+			m.titleInput, cmd = m.titleInput.Update(msg)
+			return m, cmd
+		case DetailFieldDescription:
+			m.textArea, cmd = m.textArea.Update(msg)
+			return m, cmd
+		case DetailFieldTags:
+			m.tagsInput, cmd = m.tagsInput.Update(msg)
+			return m, cmd
+		case DetailFieldDue:
+			m.dueInput, cmd = m.dueInput.Update(msg)
+			return m, cmd
+		}
+	}
+
 	return m, nil
 }
 
@@ -104,22 +125,39 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Global keys
 	switch msg.String() {
 	case "ctrl+c", "q":
-		if m.viewMode == ViewModeBoard {
+		if m.viewMode == ViewModeBoard && m.editingField == DetailFieldNone {
 			return m, tea.Quit
 		}
 	case "esc":
+		if m.viewMode == ViewModeBoard && m.editingField != DetailFieldNone {
+			m.clearDetailEditing()
+			return m, nil
+		}
 		if m.viewMode != ViewModeBoard {
+			switch m.viewMode {
+			case ViewModeEditDescription:
+				m.textArea.SetValue("")
+			case ViewModeEditDue:
+				m.dueInput.SetValue("")
+			default:
+				m.textInput.SetValue("")
+			}
 			m.viewMode = ViewModeBoard
-			m.textInput.SetValue("")
 			return m, nil
 		}
 		// If in board mode with active search, clear search first
 		if m.searchQuery != "" {
 			m.searchQuery = ""
 			m.searchInput.SetValue("")
+			m.ensureTaskVisible()
+			m.syncSelectedTask()
 			return m, nil
 		}
 		return m, tea.Quit
+	}
+
+	if m.viewMode == ViewModeBoard && m.editingField != DetailFieldNone {
+		return m.handleDetailEditKeys(msg)
 	}
 
 	// Mode-specific keys
@@ -154,6 +192,8 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.currentColumn > 0 {
 			m.currentColumn--
 			m.currentTask = 0
+			m.ensureTaskVisible()
+			m.syncSelectedTask()
 		}
 		return m, nil
 
@@ -161,6 +201,8 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.currentColumn < len(m.columns)-1 {
 			m.currentColumn++
 			m.currentTask = 0
+			m.ensureTaskVisible()
+			m.syncSelectedTask()
 		}
 		return m, nil
 
@@ -168,14 +210,15 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.currentTask > 0 {
 			m.currentTask--
 			m.ensureTaskVisible()
+			m.syncSelectedTask()
 		}
 		return m, nil
 
 	case "down", "j":
-		col := m.columns[m.currentColumn]
-		if m.currentTask < len(col.Tasks)-1 {
+		if m.currentTask < m.visibleTaskCount(m.currentColumn)-1 {
 			m.currentTask++
 			m.ensureTaskVisible()
+			m.syncSelectedTask()
 		}
 		return m, nil
 
@@ -188,6 +231,9 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e", "enter":
 		task := m.getCurrentTask()
 		if task != nil {
+			if m.beginDetailEdit(DetailFieldTitle) {
+				return m, nil
+			}
 			m.viewMode = ViewModeEditTask
 			m.textInput.SetValue(task.Title)
 			m.textInput.Focus()
@@ -197,6 +243,7 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d", "delete":
 		task := m.getCurrentTask()
 		if task != nil {
+			m.clearDetailEditing()
 			m.pendingDeleteID = task.ID
 			m.viewMode = ViewModeConfirmDelete
 		}
@@ -205,8 +252,10 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "m":
 		task := m.getCurrentTask()
 		if task != nil {
+			m.clearDetailEditing()
 			nextColumn := (m.currentColumn + 1) % len(m.columns)
 			m.currentColumn = nextColumn
+			m.selectedTaskID = task.ID
 			m.followTaskID = task.ID
 			return m, m.moveTask(task, nextColumn)
 		}
@@ -215,6 +264,9 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		task := m.getCurrentTask()
 		if task != nil {
+			if m.beginDetailEdit(DetailFieldDescription) {
+				return m, nil
+			}
 			m.viewMode = ViewModeEditDescription
 			// Expand textarea to fit available width when editing description
 			textareaWidth := m.width - 4
@@ -236,6 +288,9 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "t":
 		task := m.getCurrentTask()
 		if task != nil {
+			if m.beginDetailEdit(DetailFieldTags) {
+				return m, nil
+			}
 			m.viewMode = ViewModeEditTags
 			m.textInput.SetValue(strings.Join(task.Tags, ", "))
 			m.textInput.Focus()
@@ -245,6 +300,9 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		task := m.getCurrentTask()
 		if task != nil {
+			if m.beginDetailEdit(DetailFieldDue) {
+				return m, nil
+			}
 			m.viewMode = ViewModeEditDue
 			if task.Due != nil {
 				m.dueInput.SetValue(task.Due.Format("2006-01-02"))
@@ -260,6 +318,7 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "/":
+		m.clearDetailEditing()
 		m.viewMode = ViewModeSearch
 		m.searchInput.SetValue(m.searchQuery)
 		m.searchInput.Focus()
@@ -268,6 +327,86 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f5":
 		// Refresh: reload tasks from database
 		return m, m.loadTasks()
+	}
+
+	return m, nil
+}
+
+// handleDetailEditKeys handles field-level editing in the detail panel.
+func (m Model) handleDetailEditKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	task := m.getDetailTask()
+	if task == nil {
+		m.clearDetailEditing()
+		return m, nil
+	}
+
+	switch m.editingField {
+	case DetailFieldTitle:
+		switch msg.String() {
+		case "enter":
+			title := strings.TrimSpace(m.titleInput.Value())
+			if title == "" {
+				return m, nil
+			}
+			m.clearDetailEditing()
+			return m, m.updateTask(task.ID, title, task.Status)
+		case "esc":
+			m.clearDetailEditing()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.titleInput, cmd = m.titleInput.Update(msg)
+		return m, cmd
+
+	case DetailFieldDescription:
+		switch msg.String() {
+		case "ctrl+s":
+			m.clearDetailEditing()
+			return m, m.updateDescription(task.ID, m.textArea.Value())
+		case "esc":
+			m.clearDetailEditing()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.textArea, cmd = m.textArea.Update(msg)
+		return m, cmd
+
+	case DetailFieldTags:
+		switch msg.String() {
+		case "enter":
+			tags := parseTagsInput(m.tagsInput.Value())
+			m.clearDetailEditing()
+			return m, m.updateTags(task.ID, tags)
+		case "esc":
+			m.clearDetailEditing()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.tagsInput, cmd = m.tagsInput.Update(msg)
+		return m, cmd
+
+	case DetailFieldDue:
+		switch msg.String() {
+		case "enter":
+			dueStr := strings.TrimSpace(m.dueInput.Value())
+			var due *time.Time
+			if dueStr != "" {
+				t, err := time.Parse("2006-01-02", dueStr)
+				if err != nil {
+					m.err = fmt.Errorf("invalid date format, use YYYY-MM-DD")
+					return m, nil
+				}
+				due = &t
+			}
+			m.clearDetailEditing()
+			return m, m.updateDue(task.ID, due)
+		case "esc":
+			m.clearDetailEditing()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.dueInput, cmd = m.dueInput.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
@@ -315,12 +454,16 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchQuery = strings.ToLower(strings.TrimSpace(m.searchInput.Value()))
 		m.viewMode = ViewModeBoard
 		m.currentTask = 0 // reset task selection
+		m.ensureTaskVisible()
+		m.syncSelectedTask()
 		return m, nil
 
 	case "esc":
 		m.searchInput.SetValue("")
 		m.searchQuery = ""
 		m.viewMode = ViewModeBoard
+		m.ensureTaskVisible()
+		m.syncSelectedTask()
 		return m, nil
 	}
 
@@ -445,6 +588,7 @@ func (m Model) handleConfirmDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y":
 		id := m.pendingDeleteID
 		m.pendingDeleteID = 0
+		m.selectedTaskID = 0
 		m.viewMode = ViewModeBoard
 		return m, m.deleteTask(id)
 
