@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -26,6 +27,25 @@ const (
 	ViewModeSearch
 )
 
+// FocusArea tracks which pane currently owns input focus.
+type FocusArea int
+
+const (
+	FocusAreaBoard FocusArea = iota
+	FocusAreaDetail
+)
+
+// DetailField identifies a field in the right-side detail panel.
+type DetailField int
+
+const (
+	DetailFieldNone DetailField = iota
+	DetailFieldTitle
+	DetailFieldDescription
+	DetailFieldTags
+	DetailFieldDue
+)
+
 // Model is the main TUI model
 type Model struct {
 	db              *db.DB
@@ -34,13 +54,19 @@ type Model struct {
 	currentTask     int
 	scrollOffsets   []int // scroll offset per column
 	viewMode        ViewMode
+	focusArea       FocusArea
+	detailField     DetailField
+	editingField    DetailField
 	currentTime     time.Time
 	pendingDeleteID int64 // task ID pending deletion confirmation
 	followTaskID    int64 // task ID to follow after reload
 	textInput       textinput.Model
+	titleInput      textinput.Model
+	tagsInput       textinput.Model
 	textArea        textarea.Model
 	searchInput     textinput.Model
 	dueInput        textinput.Model
+	selectedTaskID  int64
 	searchQuery     string // active search filter
 	viewport        viewport.Model
 	width           int
@@ -63,6 +89,16 @@ func NewModel(database *db.DB) Model {
 	ti.Focus()
 	ti.CharLimit = 200
 	ti.Width = 50
+
+	titleInput := textinput.New()
+	titleInput.Placeholder = "Task title"
+	titleInput.CharLimit = 200
+	titleInput.Width = 30
+
+	tagsInput := textinput.New()
+	tagsInput.Placeholder = "bug, urgent, feature"
+	tagsInput.CharLimit = 200
+	tagsInput.Width = 30
 
 	ta := textarea.New()
 	ta.ShowLineNumbers = false
@@ -89,7 +125,10 @@ func NewModel(database *db.DB) Model {
 		scrollOffsets: make([]int, 3), // one per column
 		currentTime:   time.Now(),
 		viewMode:      ViewModeBoard,
+		focusArea:     FocusAreaBoard,
 		textInput:     ti,
+		titleInput:    titleInput,
+		tagsInput:     tagsInput,
 		textArea:      ta,
 		searchInput:   si,
 		dueInput:      di,
@@ -140,6 +179,65 @@ type errMsg struct {
 // maxVisibleTasks is the maximum number of tasks visible per column
 const maxVisibleTasks = 10
 
+const (
+	fixedBoardColumnWidth = 30
+	fixedBoardGap         = 1
+	fixedDetailPaneWidth  = 72
+	fixedBoardPaneWidth   = fixedBoardColumnWidth*3 + fixedBoardGap*2
+	minSplitWidth         = fixedBoardPaneWidth + 1 + fixedDetailPaneWidth
+)
+
+// shouldShowDetailPane reports whether the split layout is active.
+func (m Model) shouldShowDetailPane() bool {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	return width >= minSplitWidth
+}
+
+// detailPaneWidth returns the width reserved for the detail panel.
+func (m Model) detailPaneWidth() int {
+	return fixedDetailPaneWidth
+}
+
+// boardPaneWidth returns the width reserved for the kanban board.
+func (m Model) boardPaneWidth() int {
+	return fixedBoardPaneWidth
+}
+
+// resizeDetailInputs updates editor widths based on the active layout.
+func (m *Model) resizeDetailInputs() {
+	if !m.shouldShowDetailPane() {
+		return
+	}
+
+	detailWidth := m.detailPaneWidth()
+	if detailWidth <= 0 {
+		return
+	}
+
+	singleLineWidth := detailWidth - 8
+	if singleLineWidth < 18 {
+		singleLineWidth = 18
+	}
+	m.titleInput.Width = singleLineWidth
+	m.tagsInput.Width = singleLineWidth
+	m.dueInput.Width = singleLineWidth
+
+	textAreaWidth := detailWidth - 6
+	if textAreaWidth < 18 {
+		textAreaWidth = 18
+	}
+	m.textArea.SetWidth(textAreaWidth)
+
+	textAreaHeight := m.height - 18
+	if textAreaHeight < 6 {
+		textAreaHeight = 6
+	}
+	m.textArea.SetHeight(textAreaHeight)
+}
+
 // getCurrentTask returns the currently selected task (respecting active filters)
 func (m *Model) getCurrentTask() *model.Task {
 	if len(m.columns) == 0 || m.currentColumn < 0 || m.currentColumn >= len(m.columns) {
@@ -158,6 +256,127 @@ func (m *Model) getCurrentTask() *model.Task {
 	}
 
 	return &col.Tasks[actualIdx]
+}
+
+// getDetailTask returns the task currently shown in the detail panel.
+func (m *Model) getDetailTask() *model.Task {
+	if m.editingField != DetailFieldNone && m.selectedTaskID != 0 {
+		task, _, _ := m.findTaskByID(m.selectedTaskID)
+		if task != nil {
+			return task
+		}
+	}
+	return m.getCurrentTask()
+}
+
+// visibleTaskCount returns the number of tasks visible in the current filter.
+func (m *Model) visibleTaskCount(columnIndex int) int {
+	return len(m.visibleTaskIndices(columnIndex))
+}
+
+// syncSelectedTask keeps the detail pane bound to the current visible selection.
+func (m *Model) syncSelectedTask() {
+	if task := m.getCurrentTask(); task != nil {
+		m.selectedTaskID = task.ID
+		return
+	}
+	m.selectedTaskID = 0
+}
+
+// clearDetailEditing resets the right-side field editing state.
+func (m *Model) clearDetailEditing() {
+	m.focusArea = FocusAreaBoard
+	m.detailField = DetailFieldNone
+	m.editingField = DetailFieldNone
+	m.titleInput.Blur()
+	m.tagsInput.Blur()
+	m.textArea.Blur()
+	m.dueInput.Blur()
+}
+
+// beginDetailEdit activates field-level editing in the right-side panel.
+func (m *Model) beginDetailEdit(field DetailField) bool {
+	if !m.shouldShowDetailPane() {
+		return false
+	}
+
+	task := m.getCurrentTask()
+	if task == nil {
+		return false
+	}
+
+	m.clearDetailEditing()
+	m.resizeDetailInputs()
+	m.selectedTaskID = task.ID
+	m.focusArea = FocusAreaDetail
+	m.detailField = field
+	m.editingField = field
+
+	switch field {
+	case DetailFieldTitle:
+		m.titleInput.SetValue(task.Title)
+		m.titleInput.Focus()
+	case DetailFieldDescription:
+		m.textArea.SetValue(task.Description)
+		m.textArea.Focus()
+	case DetailFieldTags:
+		m.tagsInput.SetValue(strings.Join(task.Tags, ", "))
+		m.tagsInput.Focus()
+	case DetailFieldDue:
+		if task.Due != nil {
+			m.dueInput.SetValue(task.Due.Format("2006-01-02"))
+		} else {
+			m.dueInput.SetValue("")
+		}
+		m.dueInput.Focus()
+	default:
+		m.clearDetailEditing()
+		return false
+	}
+
+	return true
+}
+
+// findTaskByID locates a task in the board columns.
+func (m *Model) findTaskByID(id int64) (*model.Task, int, int) {
+	if id == 0 {
+		return nil, -1, -1
+	}
+
+	for colIdx := range m.columns {
+		for taskIdx := range m.columns[colIdx].Tasks {
+			if m.columns[colIdx].Tasks[taskIdx].ID == id {
+				return &m.columns[colIdx].Tasks[taskIdx], colIdx, taskIdx
+			}
+		}
+	}
+
+	return nil, -1, -1
+}
+
+// selectTaskByID restores the current selection using the visible task index.
+func (m *Model) selectTaskByID(id int64) bool {
+	if id == 0 {
+		return false
+	}
+
+	for colIdx := range m.columns {
+		visible := m.visibleTaskIndices(colIdx)
+		for visibleIdx, actualIdx := range visible {
+			if actualIdx < 0 || actualIdx >= len(m.columns[colIdx].Tasks) {
+				continue
+			}
+			if m.columns[colIdx].Tasks[actualIdx].ID == id {
+				m.currentColumn = colIdx
+				m.currentTask = visibleIdx
+				m.selectedTaskID = id
+				m.ensureTaskVisible()
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // ensureTaskVisible adjusts scroll offset to keep current task visible
@@ -220,23 +439,20 @@ func (m *Model) organizeTasks(tasks []model.Task) {
 
 	// If we're following a task after move, find its position
 	if m.followTaskID != 0 {
-		found := false
-		for i, task := range m.columns[m.currentColumn].Tasks {
-			if task.ID == m.followTaskID {
-				m.currentTask = i
-				found = true
-				break
-			}
-		}
+		found := m.selectTaskByID(m.followTaskID)
 		m.followTaskID = 0 // Clear after finding
 		if found {
-			m.ensureTaskVisible()
 			return
 		}
 	}
 
+	if m.selectedTaskID != 0 && m.selectTaskByID(m.selectedTaskID) {
+		return
+	}
+
 	// Ensure currentTask/scroll offset are valid for the current filters
 	m.ensureTaskVisible()
+	m.syncSelectedTask()
 }
 
 // visibleTaskIndices returns the indices of tasks visible in the given column
