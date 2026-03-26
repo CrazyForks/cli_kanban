@@ -42,6 +42,9 @@ func (db *DB) initTables() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		title TEXT NOT NULL,
 		description TEXT DEFAULT '',
+		tags TEXT DEFAULT '',
+		due DATETIME DEFAULT NULL,
+		completed_at DATETIME DEFAULT NULL,
 		status TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -61,20 +64,32 @@ func (db *DB) initTables() error {
 	`)
 	// Ignore error if column already exists
 	if err != nil && err.Error() != "duplicate column name: description" {
-		// Column might already exist, which is fine
+		return fmt.Errorf("failed to add description column: %w", err)
 	}
 
 	// Migrate existing tables to add tags column if it doesn't exist
 	_, err = db.conn.Exec(`
 		ALTER TABLE tasks ADD COLUMN tags TEXT DEFAULT '';
 	`)
-	// Ignore error if column already exists
+	if err != nil && err.Error() != "duplicate column name: tags" {
+		return fmt.Errorf("failed to add tags column: %w", err)
+	}
 
 	// Migrate existing tables to add due column if it doesn't exist
 	_, err = db.conn.Exec(`
 		ALTER TABLE tasks ADD COLUMN due DATETIME DEFAULT NULL;
 	`)
-	// Ignore error if column already exists
+	if err != nil && err.Error() != "duplicate column name: due" {
+		return fmt.Errorf("failed to add due column: %w", err)
+	}
+
+	// Migrate existing tables to add completed_at column if it doesn't exist
+	_, err = db.conn.Exec(`
+		ALTER TABLE tasks ADD COLUMN completed_at DATETIME DEFAULT NULL;
+	`)
+	if err != nil && err.Error() != "duplicate column name: completed_at" {
+		return fmt.Errorf("failed to add completed_at column: %w", err)
+	}
 
 	return nil
 }
@@ -100,6 +115,7 @@ func (db *DB) CreateTask(title string, status model.TaskStatus) (*model.Task, er
 		Title:       title,
 		Description: "",
 		Tags:        []string{},
+		CompletedAt: nil,
 		Status:      status,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -109,7 +125,7 @@ func (db *DB) CreateTask(title string, status model.TaskStatus) (*model.Task, er
 // GetAllTasks retrieves all tasks
 func (db *DB) GetAllTasks() ([]model.Task, error) {
 	rows, err := db.conn.Query(
-		"SELECT id, title, description, tags, due, status, created_at, updated_at FROM tasks ORDER BY created_at DESC",
+		"SELECT id, title, description, tags, due, completed_at, status, created_at, updated_at FROM tasks ORDER BY created_at DESC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tasks: %w", err)
@@ -121,12 +137,14 @@ func (db *DB) GetAllTasks() ([]model.Task, error) {
 		var task model.Task
 		var tagsStr string
 		var dueStr sql.NullString
-		err := rows.Scan(&task.ID, &task.Title, &task.Description, &tagsStr, &dueStr, &task.Status, &task.CreatedAt, &task.UpdatedAt)
+		var completedAtStr sql.NullString
+		err := rows.Scan(&task.ID, &task.Title, &task.Description, &tagsStr, &dueStr, &completedAtStr, &task.Status, &task.CreatedAt, &task.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan task: %w", err)
 		}
 		task.Tags = parseTags(tagsStr)
 		task.Due = parseDue(dueStr)
+		task.CompletedAt = parseNullableTime(completedAtStr)
 		tasks = append(tasks, task)
 	}
 
@@ -136,7 +154,7 @@ func (db *DB) GetAllTasks() ([]model.Task, error) {
 // GetTasksByStatus retrieves tasks by status
 func (db *DB) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) {
 	rows, err := db.conn.Query(
-		"SELECT id, title, description, tags, due, status, created_at, updated_at FROM tasks WHERE status = ? ORDER BY created_at DESC",
+		"SELECT id, title, description, tags, due, completed_at, status, created_at, updated_at FROM tasks WHERE status = ? ORDER BY created_at DESC",
 		status,
 	)
 	if err != nil {
@@ -149,12 +167,14 @@ func (db *DB) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) {
 		var task model.Task
 		var tagsStr string
 		var dueStr sql.NullString
-		err := rows.Scan(&task.ID, &task.Title, &task.Description, &tagsStr, &dueStr, &task.Status, &task.CreatedAt, &task.UpdatedAt)
+		var completedAtStr sql.NullString
+		err := rows.Scan(&task.ID, &task.Title, &task.Description, &tagsStr, &dueStr, &completedAtStr, &task.Status, &task.CreatedAt, &task.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan task: %w", err)
 		}
 		task.Tags = parseTags(tagsStr)
 		task.Due = parseDue(dueStr)
+		task.CompletedAt = parseNullableTime(completedAtStr)
 		tasks = append(tasks, task)
 	}
 
@@ -163,9 +183,15 @@ func (db *DB) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) {
 
 // UpdateTask updates a task
 func (db *DB) UpdateTask(id int64, title string, status model.TaskStatus) error {
+	previousStatus, previousCompletedAt, err := db.currentTaskCompletionState(id)
+	if err != nil {
+		return err
+	}
+
+	completedAtValue := completedAtForStatusTransition(previousStatus, previousCompletedAt, status)
 	result, err := db.conn.Exec(
-		"UPDATE tasks SET title = ?, status = ?, updated_at = ? WHERE id = ?",
-		title, status, time.Now(), id,
+		"UPDATE tasks SET title = ?, status = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+		title, status, completedAtValue, time.Now(), id,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update task: %w", err)
@@ -185,9 +211,15 @@ func (db *DB) UpdateTask(id int64, title string, status model.TaskStatus) error 
 
 // UpdateTaskStatus updates only the status of a task
 func (db *DB) UpdateTaskStatus(id int64, status model.TaskStatus) error {
+	previousStatus, previousCompletedAt, err := db.currentTaskCompletionState(id)
+	if err != nil {
+		return err
+	}
+
+	completedAtValue := completedAtForStatusTransition(previousStatus, previousCompletedAt, status)
 	result, err := db.conn.Exec(
-		"UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-		status, time.Now(), id,
+		"UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+		status, completedAtValue, time.Now(), id,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update task status: %w", err)
@@ -299,9 +331,9 @@ func tagsToString(tags []string) string {
 	return strings.Join(cleaned, ",")
 }
 
-// parseDue converts nullable string to *time.Time
-func parseDue(dueStr sql.NullString) *time.Time {
-	if !dueStr.Valid || dueStr.String == "" {
+// parseNullableTime converts nullable string to *time.Time.
+func parseNullableTime(value sql.NullString) *time.Time {
+	if !value.Valid || value.String == "" {
 		return nil
 	}
 	// Try parsing with different formats
@@ -311,11 +343,45 @@ func parseDue(dueStr sql.NullString) *time.Time {
 		"2006-01-02",
 	}
 	for _, format := range formats {
-		if t, err := time.Parse(format, dueStr.String); err == nil {
+		if t, err := time.Parse(format, value.String); err == nil {
 			return &t
 		}
 	}
 	return nil
+}
+
+// parseDue converts nullable string to *time.Time
+func parseDue(dueStr sql.NullString) *time.Time {
+	return parseNullableTime(dueStr)
+}
+
+// currentTaskCompletionState reads the current persisted completion state for a task.
+func (db *DB) currentTaskCompletionState(id int64) (model.TaskStatus, sql.NullString, error) {
+	var status string
+	var completedAt sql.NullString
+	err := db.conn.QueryRow("SELECT status, completed_at FROM tasks WHERE id = ?", id).Scan(&status, &completedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", sql.NullString{}, fmt.Errorf("task not found")
+		}
+		return "", sql.NullString{}, fmt.Errorf("failed to read current task completion state: %w", err)
+	}
+	return model.TaskStatus(status), completedAt, nil
+}
+
+// completedAtForStatusTransition returns the value to persist for completed_at.
+func completedAtForStatusTransition(previousStatus model.TaskStatus, previousCompletedAt sql.NullString, nextStatus model.TaskStatus) interface{} {
+	switch {
+	case previousStatus != model.StatusDone && nextStatus == model.StatusDone:
+		return time.Now().Format("2006-01-02 15:04:05")
+	case previousStatus == model.StatusDone && nextStatus != model.StatusDone:
+		return nil
+	default:
+		if previousCompletedAt.Valid && previousCompletedAt.String != "" {
+			return previousCompletedAt.String
+		}
+		return nil
+	}
 }
 
 // UpdateTaskDue updates a task's due date

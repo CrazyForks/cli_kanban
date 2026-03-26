@@ -25,6 +25,7 @@ const (
 	ViewModeConfirmDelete
 	ViewModeHelp
 	ViewModeSearch
+	ViewModeStats
 )
 
 // FocusArea tracks which pane currently owns input focus.
@@ -68,6 +69,7 @@ type Model struct {
 	dueInput        textinput.Model
 	selectedTaskID  int64
 	searchQuery     string // active search filter
+	stats           model.TaskStats
 	viewport        viewport.Model
 	width           int
 	height          int
