@@ -106,6 +106,8 @@ func (m Model) View() string {
 		return m.viewConfirmDelete()
 	case ViewModeHelp:
 		return m.viewHelp()
+	case ViewModeStats:
+		return m.viewStats()
 	default:
 		return m.viewBoard()
 	}
@@ -165,9 +167,9 @@ func (m Model) viewBoard() string {
 		footerContent = searchInfo + "  |  " + helpText
 	} else {
 		if m.shouldShowDetailPane() {
-			footerContent = "← → : Navigate | a: Add | e: Title | i: Desc | t: Tags | u: Due | d: Del | m: Move | / : Search | F5: Refresh | ?: Help | q: Quit"
+			footerContent = "← → : Navigate | a: Add | e: Title | i: Desc | t: Tags | u: Due | d: Del | m: Move | s: Stats | / : Search | F5: Refresh | ?: Help | q: Quit"
 		} else {
-			footerContent = "← → : Navigate | a: Add | e: Edit | i: Desc | t: Tags | u: Due | d: Del | m: Move | / : Search | F5: Refresh | ?: Help | q: Quit"
+			footerContent = "← → : Navigate | a: Add | e: Edit | i: Desc | t: Tags | u: Due | d: Del | m: Move | s: Stats | / : Search | F5: Refresh | ?: Help | q: Quit"
 		}
 	}
 
@@ -516,6 +518,73 @@ func (m Model) renderDetailEditHelp() string {
 	default:
 		return "Esc: Cancel"
 	}
+}
+
+// viewStats renders the workspace statistics screen.
+func (m Model) viewStats() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Statistics"))
+	b.WriteString("\n\n")
+
+	summaryCards := []string{
+		m.renderStatsCard("Completed Today", fmt.Sprintf("%d", m.stats.CompletedToday)),
+		m.renderStatsCard("Completed This Week", fmt.Sprintf("%d", m.stats.CompletedThisWeek)),
+	}
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, summaryCards...))
+	b.WriteString("\n\n")
+
+	b.WriteString(detailLabelStyle.Render("Last 7 Days"))
+	b.WriteString("\n")
+	if len(m.stats.CompletedLast7Days) == 0 {
+		b.WriteString(helpStyle.Render("No completion data yet."))
+	} else {
+		b.WriteString(m.renderCompletionTrend())
+	}
+	b.WriteString("\n\n")
+
+	if !m.stats.GeneratedAt.IsZero() {
+		b.WriteString(detailMetaStyle.Render("Generated: " + m.stats.GeneratedAt.Format("2006-01-02 15:04:05")))
+		b.WriteString("\n\n")
+	}
+
+	b.WriteString(helpStyle.Render("F5: Refresh | Press any other key to return"))
+	return b.String()
+}
+
+// renderStatsCard renders a simple summary card for the stats screen.
+func (m Model) renderStatsCard(label, value string) string {
+	cardStyle := columnStyle.Copy().Width(28).Padding(1, 2)
+	content := detailLabelStyle.Render(label) + "\n\n" + titleStyle.Copy().MarginBottom(0).Render(value)
+	return cardStyle.Render(content)
+}
+
+// renderCompletionTrend renders a compact 7-day completion chart.
+func (m Model) renderCompletionTrend() string {
+	maxCount := 0
+	for _, day := range m.stats.CompletedLast7Days {
+		if day.Count > maxCount {
+			maxCount = day.Count
+		}
+	}
+	if maxCount == 0 {
+		maxCount = 1
+	}
+
+	const maxBarWidth = 24
+	var lines []string
+	for _, day := range m.stats.CompletedLast7Days {
+		barWidth := day.Count * maxBarWidth / maxCount
+		if day.Count > 0 && barWidth == 0 {
+			barWidth = 1
+		}
+		bar := strings.Repeat("█", barWidth)
+		if bar == "" {
+			bar = "·"
+		}
+		lines = append(lines, fmt.Sprintf("%s  %-24s %d", day.Date, bar, day.Count))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // joinHorizontalWithGap joins panes with a fixed horizontal gap.
@@ -903,6 +972,7 @@ Actions:
   u             Edit selected task due date
   d or Delete   Delete selected task
   m             Move task to next column
+  s             Open statistics
 
 Search:
   /             Open search input

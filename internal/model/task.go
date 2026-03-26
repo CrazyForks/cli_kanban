@@ -18,6 +18,7 @@ type Task struct {
 	Description string     `json:"description"`
 	Tags        []string   `json:"tags"`
 	Due         *time.Time `json:"due,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	Status      TaskStatus `json:"status"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`

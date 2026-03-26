@@ -47,6 +47,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tasksLoadedMsg:
 		m.organizeTasks(msg.tasks)
+		statsTime := m.currentTime
+		if statsTime.IsZero() {
+			statsTime = time.Now()
+		}
+		m.stats = model.BuildTaskStats(msg.tasks, statsTime)
 		m.err = nil
 		return m, nil
 
@@ -180,6 +185,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKeys(msg)
 	case ViewModeSearch:
 		return m.handleSearchKeys(msg)
+	case ViewModeStats:
+		return m.handleStatsKeys(msg)
 	}
 
 	return m, nil
@@ -315,6 +322,11 @@ func (m Model) handleBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.viewMode = ViewModeHelp
+		return m, nil
+
+	case "s":
+		m.clearDetailEditing()
+		m.viewMode = ViewModeStats
 		return m, nil
 
 	case "/":
@@ -605,6 +617,17 @@ func (m Model) handleConfirmDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.viewMode = ViewModeBoard
 	return m, nil
+}
+
+// handleStatsKeys handles keyboard input in the statistics view.
+func (m Model) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "f5":
+		return m, m.loadTasks()
+	default:
+		m.viewMode = ViewModeBoard
+		return m, nil
+	}
 }
 
 // createTask creates a new task
